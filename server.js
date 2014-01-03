@@ -61,7 +61,6 @@ function load(root, path, callback) {
     if (entry.mode === 040000) {
       return loadAs("tree", entry.hash, onDone);
     }
-    console.log("MODE", entry)
     return loadAs("blob", entry.hash, onDone);
   });
 
@@ -100,6 +99,13 @@ function onRequest(req, res) {
       res.end("ENOENT: " + root + path + "\n");
       return;
     }
+    var etag = '"' + entry.hash + '"';
+    if (req.headers["if-none-match"] === etag) {
+      res.statusCode = 304;
+      res.end();
+      return;
+    }
+    res.setHeader("ETag", etag);
     if (entry.mode === 040000) {
       // Directory
       if (path[path.length - 1] !== "/") {
@@ -114,12 +120,6 @@ function onRequest(req, res) {
         return load(root, path, onLoad);
       }
       // Convert to a JSON file
-      var etag = '"' + entry.hash + '"';
-      if (req.headers["if-none-match"] === etag) {
-        res.statusCode = 304;
-        res.end();
-        return;
-      }
       var entries = [];
       for (var name in entry.body) {
         var item = entry.body[name];
@@ -128,8 +128,7 @@ function onRequest(req, res) {
         entries.push(item);
       }
       var body = new Buffer(JSON.stringify(entries) + "\n");
-      // Static file, serve it as-is.
-      res.setHeader("ETag", etag);
+      res.setHeader("ETag", "W/" + etag);
       res.setHeader("Content-Length", body.length);
       res.setHeader("Content-Type", "application/json");
       res.end(body);
@@ -137,13 +136,6 @@ function onRequest(req, res) {
     }
     if (entry.mode & 0777) {
       // Static file, serve it as-is.
-      var etag = '"' + entry.hash + '"';
-      if (req.headers["if-none-match"] === etag) {
-        res.statusCode = 304;
-        res.end();
-        return;
-      }
-      res.setHeader("ETag", etag);
       res.setHeader("Content-Length", entry.body.length);
       res.setHeader("Content-Type", getMime(path));
       res.end(entry.body);
