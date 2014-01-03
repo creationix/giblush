@@ -20,56 +20,81 @@ db.init(function (err) {
   });
 });
 
+// Cache the tree entries by hash for faster path lookup.
 var cache = {};
-
-// Caching loader that remembers already seen trees
-function loadAs(type, hash, callback) {
+function loadTree(hash, callback) {
   var cached = cache[hash];
-  if (cached) {
-    if (type !== cached.type) throw new TypeError("Type mismatch " + type + " !== " + cached.type);
-    return callback(null, cached.body);
-  }
-  else {
-    repo.loadAs(type, hash, function (err, body) {
-      if (err) return callback(err);
-      if (type === "tree") {
-        cache[hash] = {
-          type: type,
-          body: body
-        };
-      }
-      callback(null, body);
-    });
-  }
+  if (cached) return callback(null, cached);
+  repo.loadAs("tree", hash, function (err, tree) {
+    if (!tree) return callback(err);
+    cache[hash] = tree;
+    callback(null, tree);
+  });
 }
 
-// Given a tree hash as root and a path, get the object by walking the tree.
-function load(root, path, callback) {
-  var entry;
+function loadLink(hash, callback) {
+  var cached = cache[hash];
+  if (cached) return callback(null, cached);
+  repo.loadAs("text", hash, function (err, tree) {
+    if (!tree) return callback(err);
+    cache[hash] = tree;
+    callback(null, tree);
+  });
+}
+
+// Given a hash to a tree and a path within that tree, return the directory entry
+// complete with mode and hash.  Returns undefined when not found.
+function pathToEntry(root, path, callback) {
+  // Base case in recursion is the root itself as a tree.
+  if (!path) {
+    return callback(null, {
+      mode: 040000,
+      hash: root
+    });
+  }
   var index = path.lastIndexOf("/");
   if (index < 0) {
-    entry = { mode: 040000, hash: root };
-    return loadAs("tree", root, onDone);
+    return callback(new TypeError("Invalid path: " + path));
   }
   var dir = path.substr(0, index);
   var base = path.substr(index + 1);
-  if (!base) return load(root, dir, callback);
-  load(root, dir, function (err, parent) {
-    if (err) return callback(err);
-    entry = parent.body[base];
-    if (!entry) return callback();
-    if (entry.mode === 040000) {
-      return loadAs("tree", entry.hash, onDone);
-    }
-    return loadAs("blob", entry.hash, onDone);
-  });
 
-  function onDone(err, body) {
-    if (err) return callback(err);
-    entry.body = body;
-    callback(null, entry);
+  // Ignore trailing slashes in path.
+  if (!base) return pathToEntry(root, dir, callback);
+
+  // Recursivly find the parent directory.
+  pathToEntry(root, dir, onParent);
+
+  function onParent(err, parent) {
+    if (!parent) return callback(err);
+    if (parent.mode === 0120000) {
+      // Support symlinks to directories when resolving paths.
+      return loadLink(parent.hash, function (err, link) {
+        if (err) return callback(err);
+        var target = pathJoin(dir, "..", link);
+        return pathToEntry(root, target, onParent);
+      });
+    }
+    if (parent.mode !== 040000) {
+      return callback(new TypeError("Invalid parent mode: 0" + parent.mode.toString(8)));
+    }
+    loadTree(parent.hash, function (err, tree) {
+      if (!tree) return callback(err);
+      var entry = tree[base];
+      if (!entry) return callback();
+      if (entry.mode !== 0120000) {
+        return callback(null, entry);
+      }
+      loadLink(entry.hash, function (err, link) {
+        if (link === undefined) return callback(err);
+        entry.link = link;
+        callback(null, entry);
+      });
+    });
   }
+
 }
+
 
 function onRequest(req, res) {
   var path = urlParse(req.url).pathname;
@@ -84,9 +109,9 @@ function onRequest(req, res) {
     return;
   }
 
-  load(root, path, onLoad);
+  pathToEntry(root, path, onEntry);
 
-  function onLoad(err, entry) {
+  function onEntry(err, entry) {
     if (err) {
       res.statusCode = 500;
       res.end(err.stack + "\n");
@@ -99,6 +124,7 @@ function onRequest(req, res) {
       res.end("ENOENT: " + root + path + "\n");
       return;
     }
+
     var etag = '"' + entry.hash + '"';
     if (req.headers["if-none-match"] === etag) {
       res.statusCode = 304;
@@ -108,6 +134,7 @@ function onRequest(req, res) {
     res.setHeader("ETag", etag);
     if (entry.mode === 040000) {
       // Directory
+      res.setHeader("ETag", "W/" + etag);
       if (path[path.length - 1] !== "/") {
         // Make sure it ends in a slash
         res.statusCode = 301;
@@ -115,36 +142,51 @@ function onRequest(req, res) {
         res.end();
         return;
       }
-      if (entry.body["index.html"]) {
-        path = pathJoin(path, "index.html");
-        return load(root, path, onLoad);
-      }
-      // Convert to a JSON file
-      var entries = [];
-      for (var name in entry.body) {
-        var item = entry.body[name];
-        item.name = name;
-        item.url = "http://" + req.headers.host + pathJoin(path, name);
-        entries.push(item);
-      }
-      var body = new Buffer(JSON.stringify(entries) + "\n");
-      res.setHeader("ETag", "W/" + etag);
-      res.setHeader("Content-Length", body.length);
-      res.setHeader("Content-Type", "application/json");
-      res.end(body);
-      return;
+      return loadTree(entry.hash, function (err, tree) {
+        if (err) return onEntry(err);
+        if (tree["index.html"]) {
+          path = pathJoin(path, "index.html");
+          return pathToEntry(root, path, onEntry);
+        }
+        // Convert to a JSON file
+        var entries = [];
+        for (var name in tree) {
+          var item = tree[name];
+          item.name = name;
+          item.url = "http://" + req.headers.host + pathJoin(path, name);
+          entries.push(item);
+        }
+        var body = new Buffer(JSON.stringify(entries) + "\n");
+        res.setHeader("Content-Length", body.length);
+        res.setHeader("Content-Type", "application/json");
+        res.end(body);
+        return;
+      });
     }
     if (entry.mode & 0777) {
       // Static file, serve it as-is.
-      res.setHeader("Content-Length", entry.body.length);
-      res.setHeader("Content-Type", getMime(path));
-      res.end(entry.body);
-      return;
+      return repo.loadAs("blob", entry.hash, function (err, body) {
+        if (err) return onEntry(err);
+        res.setHeader("Content-Length", body.length);
+        res.setHeader("Content-Type", getMime(path));
+        res.end(body);
+      });
     }
     if (entry.mode === 0120000) {
       // Symbolic Link, execute the filter if any
-      console.log("SYMLINK", entry);
-      return;
+      var filters = entry.link.split("|");
+      var base = pathJoin(path, "..");
+      var target = pathJoin(base, filters.shift());
+      // If it's a static symlink, redirect to the target.
+      if (!filters.length) {
+        return pathToEntry(root, target, onEntry);
+      }
+      console.log("DYNLINK", {
+        path: path,
+        base: base,
+        target: target,
+        filters: filters
+      });
     }
 
   }
