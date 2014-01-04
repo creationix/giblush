@@ -1,4 +1,4 @@
-var domBuilder = require('./dombuilder.js');
+var domBuilder = require('dombuilder');
 
 // Clear the body
 document.body.textContent = "";
