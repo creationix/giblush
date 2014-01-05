@@ -30,6 +30,7 @@ module.exports = function (repo) {
   // Tree entries contain body at `.tree`, symlinks contain data at `.link`.
   // Returns undefined when not found.
   function pathToEntry(root, path, callback) {
+    if (!callback) return pathToEntry.bind(this, root, path);
     // Base case in recursion is the root itself as a tree.
     if (!path) {
       return loadTree(root, function (err, tree) {
