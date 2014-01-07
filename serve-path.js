@@ -79,7 +79,6 @@ function pathToEntry(root, path, callback) {
     result.mode = mode;
     result.hash = hash;
 
-    console.log(path, result.hash);
     return callback(null, result);
 
     // Used by the symlink code to resolve the target against the path.
