@@ -6,16 +6,10 @@ var urlParse = require('url').parse;
 var http = require('http');
 var getMime = require('simple-mime')('application/octet-stream');
 
-var commands = {
-  cjs: require('./cjs-filter.js'),
-  appcache: require('./appcache-filter.js')
-};
-
 var db = memDb();
 var repo = jsGit(db);
 
-// Mix in path resolving ability
-require('./path-to-entry.js')(repo);
+require('./serve-path.js')(repo);
 
 var root;
 db.init(function (err) {
@@ -31,148 +25,80 @@ db.init(function (err) {
 
 
 function onRequest(req, res) {
-  var path = urlParse(req.url).pathname;
-  console.log(req.method, path);
 
-  // TODO: Implement HEAD requests
-
-  if (req.method !== "GET") {
+  // Ensure the request is either HEAD or GET by rejecting everything else
+  var head = req.method === "HEAD";
+  if (!head && req.method !== "GET") {
     res.statusCode = 405;
-    res.setHeader("Allow", "GET");
+    res.setHeader("Allow", "HEAD,GET");
     res.end();
     return;
   }
 
-  repo.pathToEntry(root, path, onEntry);
+  var path = urlParse(req.url).pathname;
+  var reqEtag = req.headers['if-none-match'];
 
-  function onEntry(err, entry) {
-    if (err) {
-      res.statusCode = 500;
-      res.end(err.stack + "\n");
-      console.error(err.stack);
-      return;
-    }
-    if (!entry) {
-      // Not found
-      res.statusCode = 404;
-      res.end("ENOENT: " + root + path + "\n");
-      return;
-    }
+  console.log(req.method, path);
 
-    var etag;
-    if (entry.mode !== 0120000) etag = '"' + entry.hash + '"';
-    if (entry.mode === 040000) etag = "W/" + etag;
-    if (etag && req.headers["if-none-match"] === etag) {
+  repo.servePath(root, path, reqEtag, onEntry);
+
+  function onEntry(err, etag, fetch) {
+    if (etag === undefined) {
+      if (err) {
+        if (err.redirect) {
+          // User error requiring redirect
+          res.statusCode = 301;
+          res.setHeader("Location", err.redirect);
+          res.end();
+          return;
+        }
+        if (err.internalRedirect) {
+          path = err.internalRedirect;
+          res.setHeader("Location", path);
+          return repo.servePath(root, path, reqEtag, onEntry);
+        }
+      }
+      return onError(err);
+    }
+    res.setHeader("ETag", etag);
+    if (reqEtag === etag) {
+      // etag matches, no change
       res.statusCode = 304;
-      res.setHeader("ETag", etag);
       res.end();
       return;
     }
-    if (entry.mode === 040000) {
-      // Directory
-      if (path[path.length - 1] !== "/") {
-        // Make sure it ends in a slash
-        res.statusCode = 301;
-        res.setHeader("Location", path + "/");
-        res.end();
-        return;
+    res.setHeader("Content-Type", getMime(path));
+    if (head) {
+      return res.end();
+    }
+    fetch(function (err, body) {
+      if (body === undefined) return onError(err);
+
+      if (!Buffer.isBuffer(body)) {
+        if (typeof body === "object") {
+          if (body.mime) res.setHeader("Content-Type", body.mime);
+          body = body.body;
+        }
+        if (typeof body === "string") {
+          body = new Buffer(body);
+        }
       }
-      // Auto-load index.html pages
-      if (entry.tree["index.html"]) {
-        path = pathJoin(path, "index.html");
-        return repo.pathToEntry(root, path, onEntry);
-      }
-      // Render tree as JSON listing.
-      var entries = [];
-      for (var name in entry.tree) {
-        var item = entry.tree[name];
-        item.name = name;
-        item.href = "http://" + req.headers.host + pathJoin(path, name);
-        if (item.mode === 040000) item.href += "/";
-        entries.push(item);
-      }
-      var body = new Buffer(JSON.stringify(entries) + "\n");
-      res.setHeader("ETag", etag);
       res.setHeader("Content-Length", body.length);
-      res.setHeader("Content-Type", "application/json");
       res.end(body);
+    });
+  }
+
+  function onError(err) {
+    if (!err) {
+      // Not found
+      res.statusCode = 404;
+      res.end("Not found in tree " + root + ": " + path + "\n");
       return;
     }
-    if (entry.mode & 0777) {
-      // Static file, serve it as-is.
-      return repo.loadAs("blob", entry.hash, function (err, body) {
-        if (err) return onEntry(err);
-        res.setHeader("ETag", etag);
-        res.setHeader("Content-Length", body.length);
-        res.setHeader("Content-Type", getMime(path));
-        res.end(body);
-      });
-    }
-    if (entry.mode === 0120000) {
-      // Symbolic Link, execute the filter if any
-      var filters = entry.link.split("|");
-      var base = pathJoin(path, "..");
-      var target = filters.shift();
-      var input;
-
-      // If it's a static symlink, redirect to the target but preserve the
-      // original path.
-      if (!filters.length) {
-        return repo.pathToEntry(root, pathJoin(base, target), onEntry);
-      }
-
-      if (target) {
-        return loader(target, false, function (err, result) {
-          if (result === undefined) return onEntry(err);
-          input = result;
-          next();
-        });
-      }
-      next();
-    }
-
-    function next() {
-      if (!filters.length) {
-        // res.setHeader("ETag", etag);
-        var body = new Buffer(input);
-        res.setHeader("Content-Length", body.length);
-        res.setHeader("Content-Type", getMime(path));
-        res.end(body);
-        return;
-      }
-      var args = filters.shift().split(" ");
-      var name = args.shift();
-      var command = commands[name];
-      command(loader, pathToEntry, base, input, args, function (err, output) {
-        if (err) return onEntry(err);
-        input = output;
-        next();
-      });
-    }
-
+    // Server error
+    res.statusCode = 500;
+    res.end(err.stack + "\n");
+    console.error(err.stack);
   }
 }
 
-// If nothing has changed (etag matches path) callback {cached:true}
-// If path is invalid (nothing is there) callback undefined
-// If path is close (requires a redirect) callback {redirect:"/new/path/"}
-// If path is right, but etag doesn't match callback { etag: etag, fetch: fn)(
-function servePath(repo, root, path, etag, callback) {
-
-}
-
-
-
-function pathToEntry(path, callback) {
-  if (path[0] !== "/") path = "/" + path;
-  return repo.pathToEntry(root, path, callback);
-}
-
-function loader(path, binary, callback) {
-  if (!callback) return loader.bind(this, path, binary);
-  console.log("LOAD", path);
-  repo.pathToEntry(root, "/" + path, function (err, entry) {
-    if (entry === undefined) return callback(err);
-    repo.loadAs(binary ? "blob" : "text", entry.hash, callback);
-  });
-}
