@@ -64,6 +64,7 @@ function onRequest(req, res) {
     if (entry.mode === 040000) etag = "W/" + etag;
     if (etag && req.headers["if-none-match"] === etag) {
       res.statusCode = 304;
+      res.setHeader("ETag", etag);
       res.end();
       return;
     }
@@ -152,6 +153,16 @@ function onRequest(req, res) {
   }
 }
 
+// If nothing has changed (etag matches path) callback {cached:true}
+// If path is invalid (nothing is there) callback undefined
+// If path is close (requires a redirect) callback {redirect:"/new/path/"}
+// If path is right, but etag doesn't match callback { etag: etag, fetch: fn)(
+function servePath(repo, root, path, etag, callback) {
+
+}
+
+
+
 function pathToEntry(path, callback) {
   if (path[0] !== "/") path = "/" + path;
   return repo.pathToEntry(root, path, callback);
@@ -165,5 +176,3 @@ function loader(path, binary, callback) {
     repo.loadAs(binary ? "blob" : "text", entry.hash, callback);
   });
 }
-
-

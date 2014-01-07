@@ -29,7 +29,7 @@ function memDb() {
   };
 
   function get(key, callback) {
-    console.log("GET", key);
+    console.log("DB-GET", key);
     return makeAsync(function () {
       if (isHash.test(key)) {
         return objects[key];
@@ -39,7 +39,7 @@ function memDb() {
   }
 
   function set(key, value, callback) {
-    console.log("SET", key);
+    console.log("DB-SET", key);
     return makeAsync(function () {
       if (isHash.test(key)) {
         objects[key] = value;
@@ -51,6 +51,7 @@ function memDb() {
   }
 
   function has(key, callback) {
+    console.log("DB-HAS", key);
     return makeAsync(function () {
       if (isHash.test(key)) {
         return key in objects;
@@ -60,6 +61,7 @@ function memDb() {
   }
 
   function del(key, callback) {
+    console.log("DB-DEL", key);
     return makeAsync(function () {
       if (isHash.test(key)) {
         delete objects[key];
@@ -71,6 +73,7 @@ function memDb() {
   }
 
   function keys(prefix, callback) {
+    console.log("DB-KEYS", prefix);
     return makeAsync(function () {
       var length = prefix.length;
       return Object.keys(others).filter(function (key) {
@@ -80,6 +83,7 @@ function memDb() {
   }
 
   function init(callback) {
+    console.log("DB-INIT");
     return makeAsync(function () {
       objects = {};
       others = {};
