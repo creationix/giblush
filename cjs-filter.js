@@ -1,10 +1,24 @@
 var mine = require('js-linker/mine.js');
 var gen = require('js-linker/gen.js');
 var pathJoin = require('js-linker/pathjoin.js');
+var sha1 = require('js-git/lib/sha1.js');
 
 module.exports = cjs;
 
-function cjs(loader, pathToEntry, base, input, args, callback) {
+function cjs(req, callback) {
+
+  // console.log("CJS", req);
+  var etag = 'W/"' + sha1(req.root + ":" + req.target.hash) + '"';
+  return callback(null, {etag: etag, fetch: function (callback) {
+    console.log("FETCH ME!");
+  }});
+  parallel(req.args.map(function (file) {
+    return req.repo.servePath(req.root, pathJoin(req.base, file));
+  }), function (err, entries) {
+    if (err) return callback(err);
+    console.log("ENTRIES", entries);
+  });
+
   var modules = {};  // compiled modules
   var packagePaths = {}; // key is base + name , value is full path
   var aliases = {}; // path aliases from the "browser" directive in package.json

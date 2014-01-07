@@ -1,17 +1,14 @@
 var pathJoin = require('js-linker/pathjoin.js');
 
-var commands = {
-  cjs: require('./cjs-filter.js'),
-  appcache: require('./appcache-filter.js')
-};
-
 // Cache the tree entries by hash for faster path lookup.
 var cache = {};
 
-module.exports = function (repo) {
+module.exports = commands;
+function commands(repo) {
   repo.servePath = servePath;
   repo.pathToEntry = pathToEntry;
-};
+  return commands;
+}
 
 function pathToEntry(root, path, callback) {
   if (!callback) return pathToEntry.bind(this, root, path);
@@ -82,6 +79,7 @@ function pathToEntry(root, path, callback) {
     result.mode = mode;
     result.hash = hash;
 
+    console.log(path, result.hash);
     return callback(null, result);
 
     // Used by the symlink code to resolve the target against the path.
@@ -123,90 +121,63 @@ function servePath(root, path, reqEtag, callback) {
     else if (entry.mode & 0777) etag = '"' + entry.hash + '"';
 
     if (reqEtag && etag === reqEtag) {
-      return callback(null, etag);
+      return callback(null, {etag:etag});
     }
     if (entry.mode === 040000) {
       // Directory
       if (path[path.length - 1] !== "/") {
         // Redirect if trailing slash is missing
-        return callback({redirect: path + "/"});
+        return callback(null, {redirect: path + "/"});
       }
       // Auto-load index.html pages using internal redirect
       if (entry.tree["index.html"]) {
         path = pathJoin(path, "index.html");
-        return callback({internalRedirect: path});
+        return callback(null, {internalRedirect: path});
       }
       // Render tree as JSON listing.
-      return callback(null, etag, function (callback) {
-        var body = {
-          mime: "application/json",
-          body: JSON.stringify(entry.tree) + "\n"
-        };
-        callback(null, body);
-      });
+      return callback(null, { etag: etag, mime: "application/json", fetch: function (callback) {
+        callback(null, JSON.stringify(entry.tree) + "\n");
+      }});
     }
     if (entry.mode & 0777) {
       // Static file, serve it as-is.
-      return callback(null, etag, function (callback) {
+      return callback(null, {etag: etag, fetch: function (callback) {
         repo.loadAs("blob", entry.hash, callback);
-      });
+      }});
     }
     if (entry.mode === 0120000) {
       // Symbolic Link, execute the filter if any
-      var filters = entry.link.split("|");
+      var index = entry.link.indexOf("|");
       var base = pathJoin(path, "..");
-      var target = filters.shift();
-      var input;
 
       // If it's a static symlink, redirect to the target but preserve the
       // original path.
-      if (!filters.length) {
-        return repo.pathToEntry(root, pathJoin(base, target), onEntry);
+      if (index < 0) {
+        return repo.pathToEntry(root, pathJoin(base, entry.link), onEntry);
       }
 
-      if (target) {
-        return loader(target, false, function (err, result) {
-          if (result === undefined) return onEntry(err);
-          input = result;
-          next();
-        });
-      }
-      next();
-    }
-
-    function next() {
-      if (!filters.length) {
-        // res.setHeader("ETag", etag);
-        var body = new Buffer(input);
-        res.setHeader("Content-Length", body.length);
-        res.setHeader("Content-Type", getMime(path));
-        res.end(body);
-        return;
-      }
-      var args = filters.shift().split(" ");
+      var target = entry.link.substr(0, index);
+      var args = entry.link.substr(index + 1).split(" ");
       var name = args.shift();
       var command = commands[name];
-      command(loader, pathToEntry, base, input, args, function (err, output) {
-        if (err) return onEntry(err);
-        input = output;
-        next();
+      if (!command) return callback(new Error("Invalid filter name: " + name));
+      var req = {
+        base: base,
+        repo: repo,
+        root: root,
+        etag: reqEtag,
+        entry: entry,
+        args: args
+      };
+
+      if (!target) return command(req, callback);
+
+      return repo.servePath(root, pathJoin(base, target), null, function (err, target) {
+        if (!target) return callback(err);
+        req.target = target;
+        command(req, callback);
       });
     }
-
-  }
-
-  function pathToEntry(path, callback) {
-    if (path[0] !== "/") path = "/" + path;
-    return repo.pathToEntry(root, path, callback);
-  }
-
-  function loader(path, binary, callback) {
-    if (!callback) return loader.bind(this, path, binary);
-    console.log("LOAD", path);
-    repo.pathToEntry(root, "/" + path, function (err, entry) {
-      if (entry === undefined) return callback(err);
-      repo.loadAs(binary ? "blob" : "text", entry.hash, callback);
-    });
   }
 
 }

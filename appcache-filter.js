@@ -1,18 +1,21 @@
+var sha1 = require('js-git/lib/sha1.js');
+
 module.exports = appcache;
 var pathJoin = require('js-linker/pathjoin.js');
 var parallel = require('js-git/lib/parallel.js');
 
-function appcache(loader, pathToEntry, base, input, args, callback) {
-  var actions = [pathToEntry("/")];
-  args.forEach(function (file) {
-    actions.push(pathToEntry(pathJoin(base, file)));
-  });
-  parallel(actions, function (err, entries) {
+function appcache(req, callback) {
+  parallel(req.args.map(function (file) {
+    return req.repo.servePath(req.root, pathJoin(req.base, file));
+  }), function (err, entries) {
     if (err) return callback(err);
-    var result = "CACHE MANIFEST\n#" + entries.shift().hash + "\n" +
-      args.map(function (file, i) {
-        return file + " # " + entries[i].hash;
-      }).join("\n") + "\n";
-    callback(null, result);
+    var manifest = "CACHE MANIFEST\n";
+    entries.forEach(function(entry, i) {
+      manifest += req.args[i] + " # " + entry.etag + "\n";
+    });
+    var etag = '"' + sha1(manifest) + '"';
+    callback(null, {etag:etag,fetch:function (callback) {
+      callback(null, manifest);
+    }});
   });
 }

@@ -9,7 +9,10 @@ var getMime = require('simple-mime')('application/octet-stream');
 var db = memDb();
 var repo = jsGit(db);
 
-require('./serve-path.js')(repo);
+var commands = require('./serve-path.js')(repo);
+commands.cjs = require('./cjs-filter.js');
+commands.appcache = require('./appcache-filter.js');
+
 
 var root;
 db.init(function (err) {
@@ -36,54 +39,49 @@ function onRequest(req, res) {
   }
 
   var path = urlParse(req.url).pathname;
-  var reqEtag = req.headers['if-none-match'];
+  var etag = req.headers['if-none-match'];
 
   console.log(req.method, path);
 
-  repo.servePath(root, path, reqEtag, onEntry);
+  repo.servePath(root, path, etag, onEntry);
 
-  function onEntry(err, etag, fetch) {
-    if (etag === undefined) {
-      if (err) {
-        if (err.redirect) {
-          // User error requiring redirect
-          res.statusCode = 301;
-          res.setHeader("Location", err.redirect);
-          res.end();
-          return;
-        }
-        if (err.internalRedirect) {
-          path = err.internalRedirect;
-          res.setHeader("Location", path);
-          return repo.servePath(root, path, reqEtag, onEntry);
-        }
-      }
-      return onError(err);
+  function onEntry(err, result) {
+    if (result === undefined) return onError(err);
+    if (result.redirect) {
+      // User error requiring redirect
+      res.statusCode = 301;
+      res.setHeader("Location", result.redirect);
+      res.end();
+      return;
     }
-    res.setHeader("ETag", etag);
-    if (reqEtag === etag) {
+
+    if (result.internalRedirect) {
+      path = result.internalRedirect;
+      res.setHeader("Location", path);
+      return repo.servePath(root, path, etag, onEntry);
+    }
+
+    res.setHeader("ETag", result.etag);
+    if (etag === result.etag) {
       // etag matches, no change
       res.statusCode = 304;
       res.end();
       return;
     }
-    res.setHeader("Content-Type", getMime(path));
+
+    res.setHeader("Content-Type", result.mime || getMime(path));
     if (head) {
       return res.end();
     }
-    fetch(function (err, body) {
+    result.fetch(function (err, body) {
       if (body === undefined) return onError(err);
 
-      if (!Buffer.isBuffer(body)) {
-        if (typeof body === "object") {
-          if (body.mime) res.setHeader("Content-Type", body.mime);
-          body = body.body;
-        }
-        if (typeof body === "string") {
-          body = new Buffer(body);
-        }
+      if (Buffer.isBuffer(body)) {
+        res.setHeader("Content-Length", body.length);
       }
-      res.setHeader("Content-Length", body.length);
+      if (typeof body === "string") {
+        res.setHeader("Content-Length", Buffer.byteLength(body));
+      }
       res.end(body);
     });
   }
