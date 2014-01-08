@@ -1,5 +1,6 @@
 html {
-  -ms-touch-action: none; /* Direct all pointer events to JavaScript code. */
+  -ms-touch-action: none;
+  touch-action: none; /* Direct all pointer events to JavaScript code. */
 }
 body {
   margin: 0;        /* override user-agent default 8px margin */
