@@ -37,7 +37,12 @@ function render(req, callback) {
     if (err) return callback(err);
     var manifest = "CACHE MANIFEST\n";
     entries.forEach(function(entry, i) {
-      manifest += req.args[i] + " # " + entry.etag + "\n";
+      if (entry) {
+        manifest += req.args[i] + "#" + entry.etag + "\n";
+      }
+      else {
+        manifest += req.args[i] + "\n";
+      }
     });
     callback(null, manifest);
   });
