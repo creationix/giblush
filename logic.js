@@ -20,6 +20,7 @@ db.init(function (err) {
   if (err) throw err;
   importPath(repo, dataDir, function (err, hash) {
     if (err) throw err;
+    console.log("Initial import done");
     root = hash;
   });
 });
@@ -33,6 +34,7 @@ watch(dataDir, function(filename) {
 
 module.exports = onRequest;
 function onRequest(req, res) {
+  if (!root) return onError(new Error("root hash is not set yet"));
 
   // Ensure the request is either HEAD or GET by rejecting everything else
   var head = req.method === "HEAD";

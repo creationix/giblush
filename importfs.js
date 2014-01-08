@@ -14,7 +14,6 @@ function importPath(repo, path, callback) {
   if (!callback) return importPath.bind(this, repo, path);
   var stat;
   fs.lstat(path, onStat);
-
   function onStat(err, result) {
     if (err) return callback(err);
     stat = result;
@@ -32,6 +31,9 @@ function importPath(repo, path, callback) {
 
   function onDir(err, names) {
     if (err) return callback(err);
+    if (!names.length) {
+      return repo.saveAs("tree", [], onSave);
+    }
     parallel(names.map(function (name) {
       return importPath(repo, pathJoin(path, name));
     }), function (err, stats) {
