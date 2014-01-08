@@ -3,6 +3,9 @@ var pathJoin = require('js-linker/pathjoin.js');
 // Cache the tree entries by hash for faster path lookup.
 var cache = {};
 
+// Cached compiled directories that contain wildcards.
+var dirs = {};
+
 module.exports = commands;
 function commands(repo) {
   repo.servePath = servePath;
@@ -25,16 +28,68 @@ function pathToEntry(root, path, callback) {
   var hash = root;
   return walk();
 
+  function patternCompile(source, target) {
+    // Escape characters that are dangerous in regular expressions first.
+    source = source.replace(/[\-\[\]\/\(\)\*\+\?\.\\\^\$\|]/g, "\\$&");
+    // Extract all the variables in the source and target and replace them.
+    source.match(/\{[a-z]+\}/g).forEach(function (match, i) {
+      source = source.replace(match, "([^/]*)");
+      target = target.replace(match, '$' + (i + 1));
+    });
+    var match = new RegExp("^" + source + "$");
+    match.target = target;
+    return match;
+  }
+
+  function compileDir(hash, tree) {
+    var left = 0;
+    var wilds = Object.keys(tree).filter(function (key) {
+      return tree[key].mode === 0120000 && /\{[a-z]+\}/.test(key);
+    });
+    dirs[hash] = wilds;
+    wilds.forEach(function (key, i) {
+      var hash = tree[key].hash;
+      var link = cache[hash];
+      if (link) {
+        wilds[i] = patternCompile(key, link);
+        return;
+      }
+      left++;
+      repo.loadAs("text", hash, function (err, link) {
+        if (err) throw err; // TODO: handle this properly
+        cache[hash] = link;
+        wilds[i] = patternCompile(key, link);
+        if (!--left) walk();
+      });
+      if (!left) walk();
+    });
+  }
+
   function walk() {
     var cached;
+    outer:
     while (index < length) {
       // If the parent is a tree, look for our path segment
       if (mode === 040000) {
         cached = cache[hash];
         // If it's not cached yet, abort and resume later.
         if (!cached) return repo.loadAs("tree", hash, onValue);
-        var entry = cached[parts[index++]];
-        if (!entry) return callback();
+        var name = parts[index];
+        var entry = cached[name];
+        if (!entry) {
+          var dir = dirs[hash];
+          if (!dir) return compileDir(hash, cached);
+          for (var i = 0, l = dir.length; i < l; i++) {
+            var wild = dir[i];
+            if (!wild.test(name)) continue;
+            mode = 0120000;
+            hash = hash + "-" + name;
+            cache[hash] = name.replace(wild, wild.target);
+            break outer;
+          }
+          return callback();
+        }
+        index++;
         hash = entry.hash;
         mode = entry.mode;
         continue;
