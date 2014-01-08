@@ -1,0 +1,34 @@
+{
+  "name": "giblush",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A demo of a publishing system powered by js-git",
+  "dependencies": {
+    "js-git": "~0.6.1",
+    "js-linker": "~0.0.2",
+    "markdown": "~0.5.0",
+    "mime": "~1.2.11",
+    "node-watch": "~0.3.4",
+    "simple-mime": "~0.0.8"
+  },
+  "devDependencies": {
+    "nodemon": "~1.0.7"
+  },
+  "scripts": {
+    "start": "nodemon -i test server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/creationix/giblush.git"
+  },
+  "keywords": [
+    "js-git",
+    "publish"
+  ],
+  "author": "Tim Caswell <tim@creationix.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/creationix/giblush/issues"
+  },
+  "homepage": "https://github.com/creationix/giblush"
+}
