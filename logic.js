@@ -34,6 +34,11 @@ watch(dataDir, function(filename) {
 
 module.exports = onRequest;
 function onRequest(req, res) {
+  var end = res.end;
+  res.end = function () {
+    console.log(req.method, req.url, res.statusCode);
+    return end.apply(this, arguments);
+  };
   if (!root) return onError(new Error("root hash is not set yet"));
 
   // Ensure the request is either HEAD or GET by rejecting everything else
@@ -47,8 +52,6 @@ function onRequest(req, res) {
 
   var path = urlParse(req.url).pathname;
   var etag = req.headers['if-none-match'];
-
-  console.log(req.method, path);
 
   repo.servePath(root, path, etag, onEntry);
 
