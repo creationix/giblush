@@ -30,10 +30,10 @@ function pathToEntry(root, path, callback) {
 
   function patternCompile(source, target) {
     // Escape characters that are dangerous in regular expressions first.
-    source = source.replace(/[\-\[\]\/\(\)\*\+\?\.\\\^\$\|]/g, "\\$&");
+    source = source.replace(/[\-\[\]\(\)\*\+\?\.\\\^\$\|]/g, "\\$&");
     // Extract all the variables in the source and target and replace them.
     source.match(/\{[a-z]+\}/g).forEach(function (match, i) {
-      source = source.replace(match, "([^/]*)");
+      source = source.replace(match, "(.*)");
       target = target.replace(match, '$' + (i + 1));
     });
     var match = new RegExp("^" + source + "$");
@@ -41,13 +41,15 @@ function pathToEntry(root, path, callback) {
     return match;
   }
 
-  function compileDir(hash, tree) {
-    var left = 0;
+  function compileDir(hash, tree, callback) {
+    var left = 1;
+    var done = false;
     var wilds = Object.keys(tree).filter(function (key) {
       return tree[key].mode === 0120000 && /\{[a-z]+\}/.test(key);
     });
     dirs[hash] = wilds;
     wilds.forEach(function (key, i) {
+      if (done) return;
       var hash = tree[key].hash;
       var link = cache[hash];
       if (link) {
@@ -56,16 +58,27 @@ function pathToEntry(root, path, callback) {
       }
       left++;
       repo.loadAs("text", hash, function (err, link) {
-        if (err) throw err; // TODO: handle this properly
+        if (done) return;
+        if (err) {
+          done = true;
+          return callback(err);
+        }
         cache[hash] = link;
         wilds[i] = patternCompile(key, link);
-        if (!--left) walk();
+        if (!--left) {
+          done = true;
+          callback();
+        }
       });
-      if (!left) walk();
     });
+    if (!done && !--left) {
+      done = true;
+      callback();
+    }
   }
 
-  function walk() {
+  function walk(err) {
+    if (err) return callback(err);
     var cached;
     outer:
     while (index < length) {
@@ -78,7 +91,7 @@ function pathToEntry(root, path, callback) {
         var entry = cached[name];
         if (!entry) {
           var dir = dirs[hash];
-          if (!dir) return compileDir(hash, cached);
+          if (!dir) return compileDir(hash, cached, walk);
           for (var i = 0, l = dir.length; i < l; i++) {
             var wild = dir[i];
             if (!wild.test(name)) continue;
