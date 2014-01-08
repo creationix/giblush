@@ -1,0 +1,10 @@
+html {
+  -ms-touch-action: none; /* Direct all pointer events to JavaScript code. */
+}
+body {
+  margin: 0;        /* override user-agent default 8px margin */
+  overflow: hidden; /* Make sure scrollbars never appear */
+}
+canvas {
+  display: block;   /* ignore text stuff that sometimes adds margins */
+}
