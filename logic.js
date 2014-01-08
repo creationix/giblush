@@ -12,7 +12,7 @@ var repo = jsGit(db);
 var commands = require('./serve-path.js')(repo);
 commands.cjs = require('./cjs-filter.js');
 commands.appcache = require('./appcache-filter.js');
-
+commands.md2html = require('./md2html-filter.js');
 
 var root;
 var dataDir = pathJoin(__dirname, "test");
