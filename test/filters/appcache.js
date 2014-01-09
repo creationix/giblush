@@ -1,9 +1,10 @@
-var sha1 = require('js-git/lib/sha1.js');
+var sha1 = require('sha1');
+var pathJoin = require('path-join');
+var parallel = require('parallel');
+
+var mime = "text/cache-manifest";
 
 module.exports = appcache;
-var pathJoin = require('js-linker/pathjoin.js');
-var parallel = require('js-git/lib/parallel.js');
-var mime = "text/cache-manifest";
 
 function appcache(req, callback) {
   // If the file list is external, we use the root and file hash for etag
@@ -29,7 +30,6 @@ function appcache(req, callback) {
     }});
   });
 }
-
 function render(req, callback) {
   parallel(req.args.map(function (file) {
     return req.repo.servePath(req.root, pathJoin(req.base, file));

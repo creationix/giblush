@@ -1,4 +1,5 @@
 var pathJoin = require('js-linker/pathjoin.js');
+var vm = require('vm');
 
 // Cache the tree entries by hash for faster path lookup.
 var cache = {};
@@ -6,12 +7,13 @@ var cache = {};
 // Cached compiled directories that contain wildcards.
 var dirs = {};
 
-module.exports = commands;
-function commands(repo) {
+// Cached compiled filter modules by name
+var modules = {};
+
+module.exports = function (repo) {
   repo.servePath = servePath;
   repo.pathToEntry = pathToEntry;
-  return commands;
-}
+};
 
 function pathToEntry(root, path, callback) {
   if (!callback) return pathToEntry.bind(this, root, path);
@@ -226,27 +228,78 @@ function servePath(root, path, reqEtag, callback) {
       var target = entry.link.substr(0, index);
       var args = entry.link.substr(index + 1).split(" ");
       var name = args.shift();
-      var command = commands[name];
-      if (!command) return callback(new Error("Invalid filter name: " + name));
-      var req = {
+      var req ={
         base: base,
         repo: repo,
         root: root,
         etag: reqEtag,
         entry: entry,
-        args: args
+        args: args,
+        name: name
       };
-
-      if (!target) return command(req, callback);
+      if (!target) return handleCommand(req, callback);
 
       return repo.servePath(root, pathJoin(base, target), null, function (err, target) {
         if (!target) return callback(err);
         req.target = target;
-        command(req, callback);
+        handleCommand(req, callback);
       });
     }
   }
 
 }
 
+function handleCommand(req, callback) {
+  var repo = req.repo;
+  var root = req.root;
+  var name = req.name;
+  var top = cache[root];
+  var dir = top.filters;
+  if (!dir) return callback(new Error("Missing filters in root: " + root));
+  var tree = cache[dir.hash];
+  if (!tree) {
+    return repo.loadAs("tree", dir.hash, function (err, tree) {
+      if (err) return callback(err);
+      cache[dir.hash] = tree;
+      return handleCommand(req, callback);
+    });
+  }
+  var entry = tree[name + ".js"];
+  if (!entry) {
+    return callback(new Error("No such filter '" + req.name + "' in root: " + root));
+  }
+  var module = modules[name];
+  // If the module is stale, release the reference.
+  if (module && module.hash !== entry.hash) module = modules[name] = null;
+  if (!module) {
+    return repo.loadAs("text", entry.hash, function (err, js) {
+      if (err) return callback(err);
+      modules[name] = {
+        hash: entry.hash,
+        fn: compileModule(js, "git:" + root + ":/filters/" + name + ".js")
+      };
+    return handleCommand(req, callback);
+    });
+  }
+  module.fn(req, callback);
+}
 
+function compileModule(js, filename) {
+  var exports = {};
+  var module = {exports:exports};
+  var sandbox = {
+    require: fakeRequire,
+    module: module,
+    exports: exports
+  };
+  vm.runInNewContext(js, sandbox, filename);
+  // Function("module", "exports", "require", js)(module, exports, fakeRequire);
+  return module.exports;
+}
+
+function fakeRequire(name) {
+  if (name === "sha1") return require('js-git/lib/sha1.js');
+  if (name === "parallel") return require('js-git/lib/parallel.js');
+  if (name === "path-join") return require('js-linker/pathjoin.js');
+  throw new Error("Invalid require in sandbox: " + name);
+}

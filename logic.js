@@ -9,10 +9,7 @@ var watch = require('node-watch');
 var db = memDb();
 var repo = jsGit(db);
 
-var commands = require('./serve-path.js')(repo);
-commands.cjs = require('./filters/cjs.js');
-commands.appcache = require('./filters/appcache.js');
-commands.md2html = require('./filters/md2html.js');
+require('./serve-path.js')(repo);
 
 var root;
 var dataDir = pathJoin(__dirname, "test");
