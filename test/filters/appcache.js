@@ -9,7 +9,7 @@ var cache = {};
 module.exports = appcache;
 
 function appcache(req, callback) {
-  // If the file is external
+  // If the file is external load and cache it for speed.
   if (req.target) {
     var cached = cache[req.target.hash];
     if (!cached) {
