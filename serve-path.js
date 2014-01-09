@@ -288,6 +288,7 @@ function compileModule(js, filename) {
   var exports = {};
   var module = {exports:exports};
   var sandbox = {
+    console: console,
     require: fakeRequire,
     module: module,
     exports: exports
