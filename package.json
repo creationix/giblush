@@ -4,7 +4,7 @@
   "private": true,
   "description": "A demo of a publishing system powered by js-git",
   "dependencies": {
-    "js-git": "~0.6.1",
+    "js-git": "~0.6.2",
     "js-linker": "~0.0.2",
     "markdown": "~0.5.0",
     "node-watch": "~0.3.4",
