@@ -293,6 +293,10 @@ function compileModule(js, filename) {
     exports: exports
   };
   vm.runInNewContext(js, sandbox, filename);
+  // TODO: find a way to run this safely that doesn't crash the main process
+  // when there are errors in the user-provided script.
+
+  // Alternative implementation that doesn't use VM.
   // Function("module", "exports", "require", js)(module, exports, fakeRequire);
   return module.exports;
 }
